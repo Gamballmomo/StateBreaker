@@ -1303,6 +1303,7 @@ docker compose down
 - [数据契约](docs/contracts.md)
 - [插件开发说明](docs/plugin-development.md)
 - [进度报告（中文）](docs/PROGRESS_REPORT_ZH.md)
+- [阶段汇报报告（诚实版）](docs/HONEST_PROGRESS_REPORT_ZH.md)
 - [Progress report (English)](docs/PROGRESS_REPORT_EN.md)
 - [贡献指南](CONTRIBUTING.md)
 - [模板插件说明](plugin-template/README.md)
