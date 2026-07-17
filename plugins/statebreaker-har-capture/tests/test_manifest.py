@@ -20,6 +20,7 @@ def test_manifest_is_complete_and_explicit() -> None:
         "json-body",
         "form-body",
         "replayable-credentials",
+        "static-resource-filtering",
     ]
     assert "Offline HAR 1.2 import" in manifest.description
 

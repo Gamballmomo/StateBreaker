@@ -10,6 +10,7 @@ class HarCaptureOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    filter_static_resources: bool = True
     state_probe_entry_indices: list[int] = Field(default_factory=list)
     strip_credentials: bool = False
 

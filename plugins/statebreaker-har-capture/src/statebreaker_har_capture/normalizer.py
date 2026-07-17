@@ -11,6 +11,10 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 from statebreaker_har_capture.errors import HarCaptureError
 from statebreaker_har_capture.options import HarCaptureOptions
+from statebreaker_har_capture.resource_filter import (
+    StaticResourceReason,
+    static_resource_filter_reason,
+)
 
 ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 REMOVED_HEADERS = frozenset(
@@ -201,6 +205,39 @@ def _step_id(index: int, method: str, path: str) -> str:
     return f"step-{index:04d}-{method.lower()}-{slug}-{digest}"
 
 
+def _retained_entries(
+    entries: list[Any], options: HarCaptureOptions
+) -> list[tuple[int, Any]]:
+    indexed_entries = list(enumerate(entries))
+    if not options.filter_static_resources:
+        return indexed_entries
+
+    retained: list[tuple[int, Any]] = []
+    filtered: dict[int, StaticResourceReason] = {}
+    for index, entry in indexed_entries:
+        reason = static_resource_filter_reason(entry) if isinstance(entry, Mapping) else None
+        if reason is None:
+            retained.append((index, entry))
+        else:
+            filtered[index] = reason
+
+    for probe_index in options.state_probe_entry_indices:
+        reason = filtered.get(probe_index)
+        if reason is not None:
+            raise HarCaptureError(
+                "HAR state probe error at entry "
+                f"{probe_index}: selected entry was filtered as a static resource "
+                f"({reason.value})"
+            )
+
+    if not retained:
+        raise HarCaptureError(
+            "HAR static resource filter error: all entries were filtered; "
+            "no business requests are available to generate a workflow"
+        )
+    return retained
+
+
 def normalize_har(document: Mapping[str, Any], options: HarCaptureOptions) -> dict[str, Any]:
     """Return a deterministic Workflow-shaped mapping without mutating *document*."""
 
@@ -213,12 +250,14 @@ def normalize_har(document: Mapping[str, Any], options: HarCaptureOptions) -> di
                 f"{probe_index}: index is out of range for {entry_count} entries"
             )
 
+    retained_entries = _retained_entries(entries, options)
+
     expected_origin: tuple[str, str, int] | None = None
     base_url = ""
     steps: list[dict[str, Any]] = []
     step_by_entry: dict[int, str] = {}
 
-    for index, entry in enumerate(entries):
+    for index, entry in retained_entries:
         if not isinstance(entry, dict):
             raise _entry_error(index, "structure", "entry must be an object")
         request = entry.get("request")
