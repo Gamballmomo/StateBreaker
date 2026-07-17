@@ -22,9 +22,12 @@ MAX_RUNS = 100
 STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(
-    title="老王奶茶铺 · BUG50 竞态靶场",
+    title="Uncle Wang's Milk Tea · BUG50 race lab",
     version="0.1.0",
-    description="仅供本地和已授权的业务逻辑安全实验使用。",
+    description=(
+        "Local coupon race-condition lab for authorized business-logic experiments. "
+        "UI supports EN/中文."
+    ),
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
