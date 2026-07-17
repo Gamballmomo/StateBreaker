@@ -6,7 +6,7 @@ from pathlib import Path
 from click import unstyle
 from typer.testing import CliRunner
 
-from statebreaker.cli import app
+from statebreaker.cli import _resolve_interactive_plan, app
 from statebreaker.documents import load_model, write_json
 from statebreaker.models import AttackPlan
 
@@ -150,6 +150,14 @@ def test_interactive_workbench_supports_english_and_runtime_language_switch() ->
     assert switched.exit_code == 0
     assert "Switch to English" in switched.stdout
     assert "Leave the workbench" in switched.stdout
+
+
+def test_interactive_plan_selection_accepts_displayed_index() -> None:
+    plan = load_model(ROOT / "examples/coupon-race/attack-plan.yaml", AttackPlan)
+    second = plan.model_copy(update={"id": "second-plan", "attack_type": "offset-sweep"})
+
+    assert _resolve_interactive_plan([plan, second], "2").id == "second-plan"
+    assert _resolve_interactive_plan([plan, second], "offset-sweep").id == "second-plan"
 
 
 def test_plan_list_and_select_are_separate_steps(tmp_path: Path) -> None:

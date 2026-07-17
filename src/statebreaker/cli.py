@@ -112,6 +112,18 @@ def _interactive_status(output_dir: Path, language: str) -> None:
         typer.echo(f"  [{marker}] {label:<20} {path}")
 
 
+def _resolve_interactive_plan(plans: list[AttackPlan], selection: str) -> AttackPlan:
+    """Resolve a displayed one-based index or an attack type."""
+
+    value = selection.strip()
+    if value.isdecimal():
+        index = int(value)
+        if index < 1 or index > len(plans):
+            raise DocumentError(f"plan index must be between 1 and {len(plans)}")
+        return plans[index - 1]
+    return select_attack_plan(plans, attack_type=value)
+
+
 def _run(awaitable: Any) -> Any:
     return asyncio.run(awaitable)
 
@@ -556,9 +568,20 @@ def interactive_workbench(
                 )
                 continue
             list_attack_plans(plans_path)
-            select_prompt = "Select attack_type" if language == "en" else "选择 attack_type"
-            selected_type = typer.prompt(select_prompt, default=attack_type)
-            select_plan_command(plans_path, selected_path, None, selected_type)
+            select_prompt = (
+                "Select INDEX or attack_type"
+                if language == "en"
+                else "输入序号或 attack_type"
+            )
+            selection = typer.prompt(select_prompt, default=attack_type)
+            plans = load_typed(plans_path, list[AttackPlan])
+            try:
+                selected = _resolve_interactive_plan(plans, selection)
+            except DocumentError as exc:
+                typer.echo(f"{'Error' if language == 'en' else '错误'}: {exc}")
+                continue
+            _write_output(selected_path, selected)
+            _show_plan(selected)
         elif choice == "5":
             if not selected_path.exists():
                 typer.echo("Run [4] Select first." if language == "en" else "请先执行 [4] Select。")
