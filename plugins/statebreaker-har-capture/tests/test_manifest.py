@@ -17,6 +17,9 @@ def test_manifest_is_complete_and_explicit() -> None:
         "har-1.2",
         "deterministic-workflow",
         "offline-import",
+        "json-body",
+        "form-body",
+        "replayable-credentials",
     ]
     assert "Offline HAR 1.2 import" in manifest.description
 

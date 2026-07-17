@@ -11,6 +11,7 @@ class HarCaptureOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     state_probe_entry_indices: list[int] = Field(default_factory=list)
+    strip_credentials: bool = False
 
     @model_validator(mode="after")
     def validate_probe_indices(self) -> HarCaptureOptions:

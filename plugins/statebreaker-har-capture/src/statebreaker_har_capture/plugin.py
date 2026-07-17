@@ -23,7 +23,14 @@ class HarCapturePlugin:
         version="0.1.0",
         api_version="0.1",
         group="statebreaker.capture",
-        capabilities=["har-1.2", "deterministic-workflow", "offline-import"],
+        capabilities=[
+            "har-1.2",
+            "deterministic-workflow",
+            "offline-import",
+            "json-body",
+            "form-body",
+            "replayable-credentials",
+        ],
         description=(
             "Offline HAR 1.2 import and normalization plugin that produces deterministic "
             "StateBreaker workflows without network access."

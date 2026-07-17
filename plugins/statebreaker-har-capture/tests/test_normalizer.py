@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from statebreaker.models import Workflow
 
 from statebreaker_har_capture.errors import HarCaptureError
 from statebreaker_har_capture.har_parser import parse_har
@@ -45,12 +46,23 @@ def test_normalization_is_deterministic_and_non_mutating() -> None:
     assert first["steps"][0]["id"].startswith("step-0000-get-api-runs-")
 
 
-def test_sensitive_headers_are_removed_and_remaining_headers_are_lowercase() -> None:
+def test_credentials_are_preserved_for_replay_and_headers_are_lowercase() -> None:
     headers = _candidate()["steps"][0]["request"]["headers"]
 
+    assert headers == {
+        "authorization": "Bearer TEST-SECRET-DO-NOT-USE",
+        "cookie": "session=TEST-COOKIE-DO-NOT-USE",
+        "x-trace": "fixture",
+    }
+
+
+def test_credentials_can_be_explicitly_stripped() -> None:
+    candidate = _candidate(HarCaptureOptions(strip_credentials=True))
+    headers = candidate["steps"][0]["request"]["headers"]
+
     assert headers == {"x-trace": "fixture"}
-    assert "TEST-SECRET-DO-NOT-USE" not in repr(_candidate())
-    assert "TEST-COOKIE-DO-NOT-USE" not in repr(_candidate())
+    assert "TEST-SECRET-DO-NOT-USE" not in repr(candidate)
+    assert "TEST-COOKIE-DO-NOT-USE" not in repr(candidate)
 
 
 def test_duplicate_retained_header_is_rejected() -> None:
@@ -87,11 +99,68 @@ def test_query_string_requires_string_fields_without_leaking_values(
     assert sensitive_value not in str(error.value)
 
 
-def test_non_empty_request_body_is_explicitly_rejected() -> None:
+def test_json_request_body_is_normalized() -> None:
     document = parse_har(FIXTURES / "minimal.har")
-    document["log"]["entries"][0]["request"]["postData"] = {"text": "not emitted"}
+    document["log"]["entries"][0]["request"]["method"] = "POST"
+    document["log"]["entries"][0]["request"]["postData"] = {
+        "mimeType": "application/json; charset=utf-8",
+        "text": '{"coupon_code":"BUG50","quantity":2}',
+    }
 
-    with pytest.raises(HarCaptureError, match="本阶段暂不支持请求 body"):
+    candidate = normalize_har(document, HarCaptureOptions())
+
+    assert candidate["steps"][0]["request"]["json_body"] == {
+        "coupon_code": "BUG50",
+        "quantity": 2,
+    }
+    assert "form_body" not in candidate["steps"][0]["request"]
+    Workflow.model_validate(candidate)
+
+
+def test_form_request_body_preserves_repeated_fields() -> None:
+    document = parse_har(FIXTURES / "minimal.har")
+    document["log"]["entries"][0]["request"]["method"] = "POST"
+    document["log"]["entries"][0]["request"]["postData"] = {
+        "mimeType": "application/x-www-form-urlencoded",
+        "params": [
+            {"name": "scope", "value": "read"},
+            {"name": "scope", "value": "write"},
+            {"name": "empty", "value": ""},
+        ],
+    }
+
+    candidate = normalize_har(document, HarCaptureOptions())
+
+    assert candidate["steps"][0]["request"]["form_body"] == {
+        "scope": ["read", "write"],
+        "empty": "",
+    }
+    assert "json_body" not in candidate["steps"][0]["request"]
+    Workflow.model_validate(candidate)
+
+
+def test_invalid_json_body_is_rejected_without_leaking_body() -> None:
+    document = parse_har(FIXTURES / "minimal.har")
+    secret_body = '{"token":"TEST-SECRET-BODY"'
+    document["log"]["entries"][0]["request"]["postData"] = {
+        "mimeType": "application/json",
+        "text": secret_body,
+    }
+
+    with pytest.raises(HarCaptureError, match="contains invalid JSON") as error:
+        normalize_har(document, HarCaptureOptions())
+
+    assert secret_body not in str(error.value)
+
+
+def test_unsupported_raw_request_body_is_explicitly_rejected() -> None:
+    document = parse_har(FIXTURES / "minimal.har")
+    document["log"]["entries"][0]["request"]["postData"] = {
+        "mimeType": "text/plain",
+        "text": "not emitted",
+    }
+
+    with pytest.raises(HarCaptureError, match="unsupported request body content type"):
         normalize_har(document, HarCaptureOptions())
 
 

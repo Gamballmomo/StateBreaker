@@ -33,6 +33,19 @@ async def test_capture_returns_real_workflow_and_is_deterministic() -> None:
 
 
 @pytest.mark.asyncio
+async def test_capture_preserves_authenticated_json_request_for_replay() -> None:
+    workflow = await HarCapturePlugin().capture(FIXTURES / "replayable-json.har", {})
+
+    request = workflow.steps[0].request
+    assert str(workflow.base_url) == "http://127.0.0.1:18080/"
+    assert request.method == "POST"
+    assert request.path == "/api/runs/demo/redeem"
+    assert request.headers["authorization"] == "Bearer TEST-AUTH-TOKEN"
+    assert request.headers["cookie"] == "session=TEST-SESSION"
+    assert request.json_body == {"coupon_code": "BUG50"}
+
+
+@pytest.mark.asyncio
 async def test_state_probe_option_uses_original_entry_index() -> None:
     workflow = await HarCapturePlugin().capture(
         FIXTURES / "minimal.har", {"state_probe_entry_indices": [1]}

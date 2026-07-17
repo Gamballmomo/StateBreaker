@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -14,15 +15,14 @@ from statebreaker_har_capture.options import HarCaptureOptions
 ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 REMOVED_HEADERS = frozenset(
     {
-        "authorization",
         "connection",
         "content-length",
-        "cookie",
         "host",
         "proxy-authorization",
         "transfer-encoding",
     }
 )
+CREDENTIAL_HEADERS = frozenset({"authorization", "cookie"})
 
 
 def _entry_error(index: int, category: str, reason: str) -> HarCaptureError:
@@ -91,7 +91,9 @@ def _normalize_query(request: Mapping[str, Any], url_query: str, index: int) -> 
     return query
 
 
-def _normalize_headers(request: Mapping[str, Any], index: int) -> dict[str, str]:
+def _normalize_headers(
+    request: Mapping[str, Any], index: int, *, strip_credentials: bool
+) -> dict[str, str]:
     items = request.get("headers", [])
     if not isinstance(items, list):
         raise _entry_error(index, "header", "request.headers must be a list")
@@ -113,12 +115,82 @@ def _normalize_headers(request: Mapping[str, Any], index: int) -> dict[str, str]
         normalized_name = name.lower()
         if normalized_name in REMOVED_HEADERS:
             continue
+        if strip_credentials and normalized_name in CREDENTIAL_HEADERS:
+            continue
         if normalized_name in headers:
             raise _entry_error(
                 index, "header", f"duplicate retained header name {normalized_name!r}"
             )
         headers[normalized_name] = value
     return headers
+
+
+def _normalize_form_items(items: Any, index: int) -> dict[str, Any]:
+    if not isinstance(items, list):
+        raise _entry_error(index, "body", "request.postData.params must be a list")
+    form: dict[str, Any] = {}
+    for position, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise _entry_error(
+                index, "body", f"request.postData.params item {position} must be an object"
+            )
+        name = item.get("name")
+        value = item.get("value")
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise _entry_error(
+                index,
+                "body",
+                f"request.postData.params item {position} requires string name and value",
+            )
+        _add_query_value(form, name, value)
+    return form
+
+
+def _normalize_body(
+    request: Mapping[str, Any], index: int
+) -> tuple[Any | None, dict[str, Any] | None]:
+    post_data = request.get("postData")
+    if post_data is None:
+        return None, None
+    if not isinstance(post_data, dict):
+        raise _entry_error(index, "body", "request.postData must be an object")
+
+    raw_mime_type = post_data.get("mimeType", "")
+    if not isinstance(raw_mime_type, str):
+        raise _entry_error(index, "body", "request.postData.mimeType must be a string")
+    mime_type = raw_mime_type.split(";", maxsplit=1)[0].strip().lower()
+
+    if mime_type == "application/x-www-form-urlencoded":
+        if "params" in post_data:
+            return None, _normalize_form_items(post_data["params"], index)
+        text = post_data.get("text", "")
+        if not isinstance(text, str):
+            raise _entry_error(index, "body", "request.postData.text must be a string")
+        form: dict[str, Any] = {}
+        for name, value in parse_qsl(text, keep_blank_values=True):
+            _add_query_value(form, name, value)
+        return None, form
+
+    if mime_type == "application/json" or mime_type.endswith("+json"):
+        text = post_data.get("text")
+        if not isinstance(text, str):
+            raise _entry_error(
+                index, "body", "JSON request.postData requires string text"
+            )
+        try:
+            return json.loads(text), None
+        except json.JSONDecodeError as exc:
+            raise _entry_error(index, "body", "request.postData contains invalid JSON") from exc
+
+    text = post_data.get("text", "")
+    if text in {"", None} and not post_data.get("params"):
+        return None, None
+    rendered_type = mime_type or "unspecified"
+    raise _entry_error(
+        index,
+        "body",
+        f"unsupported request body content type {rendered_type!r}; use JSON or form data",
+    )
 
 
 def _step_id(index: int, method: str, path: str) -> str:
@@ -170,23 +242,30 @@ def normalize_har(document: Mapping[str, Any], options: HarCaptureOptions) -> di
         elif origin != expected_origin:
             raise _entry_error(index, "origin", "all requests must belong to the same origin")
 
-        if request.get("postData"):
-            raise _entry_error(index, "body", "本阶段暂不支持请求 body")
+        json_body, form_body = _normalize_body(request, index)
 
         step_id = _step_id(index, method, path)
         depends_on = [steps[-1]["id"]] if steps else []
         is_probe = index in options.state_probe_entry_indices
+        request_spec: dict[str, Any] = {
+            "method": method,
+            "path": path,
+            "headers": _normalize_headers(
+                request, index, strip_credentials=options.strip_credentials
+            ),
+            "query": _normalize_query(request, url_query, index),
+        }
+        if json_body is not None:
+            request_spec["json_body"] = json_body
+        if form_body is not None:
+            request_spec["form_body"] = form_body
+
         steps.append(
             {
                 "id": step_id,
                 "role": "probe" if is_probe else "action",
                 "session": "default",
-                "request": {
-                    "method": method,
-                    "path": path,
-                    "headers": _normalize_headers(request, index),
-                    "query": _normalize_query(request, url_query, index),
-                },
+                "request": request_spec,
                 "extract": [],
                 "depends_on": depends_on,
                 "tags": ["har-1.2", "offline-import"],

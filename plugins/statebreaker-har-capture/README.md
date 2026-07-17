@@ -1,7 +1,7 @@
 # StateBreaker HAR Capture
 
 `statebreaker-har-capture` is an offline importer for minimal HAR 1.2 files. It parses a
-HAR without network access, removes sensitive and transport-managed request headers, and
+HAR without network access, removes transport-managed request headers, and
 produces a deterministic StateBreaker `Workflow` with a linear dependency chain.
 
 ## Install and use
@@ -14,10 +14,14 @@ statebreaker workflow import recording.har --plugin har.capture --output workflo
 statebreaker workflow validate workflow.json
 ```
 
-The current vertical slice accepts `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` requests
-without a request body. JSON, form, or any other non-empty HAR `postData` is intentionally
-rejected. Static-resource filtering, recursive sensitive-data cleanup, and dynamic-variable
-inference are not implemented yet.
+The importer accepts `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` requests. JSON bodies and
+`application/x-www-form-urlencoded` bodies are normalized into the core `json_body` and
+`form_body` contracts. Other raw body formats are rejected with a clear error. Static-resource
+filtering and dynamic-variable inference are not implemented yet.
+
+Authorization and Cookie headers are preserved by default because a captured authenticated
+workflow must remain replayable. Treat exported Workflow files as sensitive data. Direct API
+callers can set `strip_credentials=True` when they need a shareable redacted artifact.
 
 ## Options
 
@@ -26,7 +30,7 @@ Direct plugin callers may pass the only supported option:
 ```python
 workflow = await HarCapturePlugin().capture(
     Path("recording.har"),
-    {"state_probe_entry_indices": [1]},
+    {"state_probe_entry_indices": [1], "strip_credentials": False},
 )
 ```
 
