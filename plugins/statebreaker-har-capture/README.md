@@ -42,6 +42,40 @@ If a state probe selects a filtered entry, capture fails with the original index
 category. If every entry is filtered, capture fails before a Workflow is constructed. These errors
 do not include request URLs, headers, cookies, authorization values, or bodies.
 
+## Explicit step roles
+
+The plugin manifest advertises the `explicit-step-roles` capability. Callers can assign roles with
+original zero-based HAR `log.entries` indices:
+
+```json
+{
+  "setup_entry_indices": [0],
+  "state_probe_entry_indices": [1, 3]
+}
+```
+
+Entries in `setup_entry_indices` become `setup` steps, entries in
+`state_probe_entry_indices` become `probe` steps, and all unspecified retained entries remain
+`action` steps. The two lists must not overlap. Indices must be non-negative, unique within each
+list, in range, and refer to retained entries. Selecting a statically filtered entry fails with its
+original index; indices are never remapped after filtering. Setup steps are not added to
+`state_probe_steps`.
+
+Roles are only assigned from these explicit options. The plugin does not automatically infer setup
+steps from request methods, response status codes, URL names, step position, response IDs, or
+generated extractors. For example, the first `POST` remains an `action` unless its original index
+is listed in `setup_entry_indices`.
+
+The current core CLI accepts the same mapping from a JSON or YAML file through `--options`:
+
+```bash
+statebreaker workflow import recording.har --plugin har.capture \
+  --options capture-options.json --output workflow.json
+```
+
+For the local coupon-race fixture, the JSON configuration above produces
+`setup, probe, action, probe` for entries `0, 1, 2, 3`.
+
 ## JSON response extractors
 
 The plugin manifest advertises the `json-response-extractors` capability. Inference is enabled by
@@ -73,8 +107,8 @@ human-readable slug renders a template such as `${run_id}` as `run-id`.
 Dynamic values that cannot be inferred reliably remain literal and may still appear in requests or
 step metadata. The plugin does not provide general anonymization for unknown identifiers.
 
-This feature does not infer setup roles, authentication variables, CSRF flows, sessions, origins,
-or generic dependencies, and it does not prove Runtime replay.
+This feature does not automatically infer setup roles, authentication variables, CSRF flows,
+sessions, origins, or generic dependencies, and it does not prove Runtime replay.
 
 ## Local coupon-race replay acceptance
 
@@ -84,8 +118,9 @@ integration test uses `httpx.ASGITransport`, so every request stays in process a
 network or listening port is used.
 
 This acceptance covers a single origin, one session, and a JSON API. The create step remains an
-`action`; capture does not infer a `setup` role. Generic authentication and CSRF inference remain
-unsupported, and this focused test does not imply that arbitrary HAR recordings are replayable.
+`action` by default and becomes `setup` only when entry `0` is explicitly configured. Generic
+authentication and CSRF inference remain unsupported, and this focused test does not imply that
+arbitrary HAR recordings are replayable.
 
 ## Options
 
@@ -97,6 +132,7 @@ workflow = await HarCapturePlugin().capture(
     {
         "filter_static_resources": True,
         "infer_response_variables": True,
+        "setup_entry_indices": [0],
         "state_probe_entry_indices": [1],
         "strip_credentials": False,
     },
@@ -108,13 +144,13 @@ Set `infer_response_variables=False` to keep normalized requests literal and emi
 extractors. Both conservative enhancements default to `True` when the options mapping is empty.
 
 Indices are zero-based positions in the original `log.entries` array. They must be unique,
-non-negative, in range, and refer to a generated step. Selected steps use the `probe` role
-and are listed in `state_probe_steps`. Selecting an entry removed by static-resource filtering
-is an explicit error and is never silently ignored or remapped.
+non-negative, in range, and refer to a generated step. Setup and probe indices must not overlap.
+Only selected probe steps are listed in `state_probe_steps`. Selecting an entry removed by
+static-resource filtering is an explicit error and is never silently ignored or remapped.
 
 The core CLI accepts the same mapping from a JSON or YAML file:
 
 ```bash
 statebreaker workflow import recording.har --plugin har.capture \
-  --options capture-options.yaml --output workflow.json
+  --options capture-options.json --output workflow.json
 ```

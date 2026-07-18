@@ -23,7 +23,10 @@ from app.main import COUPON_CODE, RUNS, app  # noqa: E402
 FIXTURE = Path(__file__).parent / "fixtures" / "coupon-race-normal.har"
 RECORDED_RUN_ID = "recordedrunid000000000000000001"
 VARIANT_RECORDED_RUN_ID = "recordedrunid999999999999999999"
-CAPTURE_OPTIONS = {"state_probe_entry_indices": [1, 3]}
+CAPTURE_OPTIONS = {
+    "setup_entry_indices": [0],
+    "state_probe_entry_indices": [1, 3],
+}
 
 
 class RecordingASGITransport(httpx.ASGITransport):
@@ -100,7 +103,8 @@ async def test_coupon_race_capture_is_deterministic_and_replayable() -> None:
         "0003",
     ]
 
-    assert create.role == "action"
+    assert [step.role for step in first.steps] == ["setup", "probe", "action", "probe"]
+    assert create.role == "setup"
     assert len(create.extract) == 1
     extractor = create.extract[0]
     assert extractor.name == "run_id"

@@ -23,6 +23,7 @@ def test_manifest_is_complete_and_explicit() -> None:
         "replayable-credentials",
         "static-resource-filtering",
         "json-response-extractors",
+        "explicit-step-roles",
     ]
     assert "Offline HAR 1.2 import" in manifest.description
 
@@ -37,6 +38,10 @@ def test_readme_documents_inference_capability_and_limits() -> None:
     )
 
     assert "json-response-extractors" in readme
+    assert "explicit-step-roles" in readme
+    assert "setup_entry_indices" in readme
     assert "infer_response_variables=False" in readme
-    assert "does not infer setup roles" in readme
+    assert "does not automatically infer setup roles" in readme
+    assert "--options capture-options.json" in readme
+    assert "automatic-role-inference" not in readme
     assert "does not prove Runtime replay" in readme

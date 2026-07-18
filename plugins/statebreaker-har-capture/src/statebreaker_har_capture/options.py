@@ -12,13 +12,27 @@ class HarCaptureOptions(BaseModel):
 
     filter_static_resources: bool = True
     infer_response_variables: bool = True
+    setup_entry_indices: list[int] = Field(default_factory=list)
     state_probe_entry_indices: list[int] = Field(default_factory=list)
     strip_credentials: bool = False
 
     @model_validator(mode="after")
-    def validate_probe_indices(self) -> HarCaptureOptions:
-        if any(index < 0 for index in self.state_probe_entry_indices):
-            raise ValueError("state_probe_entry_indices must contain only non-negative indices")
-        if len(self.state_probe_entry_indices) != len(set(self.state_probe_entry_indices)):
-            raise ValueError("state_probe_entry_indices must not contain duplicates")
+    def validate_role_indices(self) -> HarCaptureOptions:
+        for option_name, indices in (
+            ("setup_entry_indices", self.setup_entry_indices),
+            ("state_probe_entry_indices", self.state_probe_entry_indices),
+        ):
+            if any(index < 0 for index in indices):
+                raise ValueError(f"{option_name} must contain only non-negative indices")
+            if len(indices) != len(set(indices)):
+                raise ValueError(f"{option_name} must not contain duplicates")
+
+        conflicts = sorted(
+            set(self.setup_entry_indices).intersection(self.state_probe_entry_indices)
+        )
+        if conflicts:
+            raise ValueError(
+                "role index conflict: setup_entry_indices and state_probe_entry_indices "
+                f"overlap at original entry indices {conflicts}"
+            )
         return self

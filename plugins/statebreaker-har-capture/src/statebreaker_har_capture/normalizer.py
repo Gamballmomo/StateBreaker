@@ -296,6 +296,15 @@ def _retained_entries(
         else:
             filtered[index] = reason
 
+    for setup_index in options.setup_entry_indices:
+        reason = filtered.get(setup_index)
+        if reason is not None:
+            raise HarCaptureError(
+                "HAR setup role error at entry "
+                f"{setup_index}: selected entry was filtered as a static resource "
+                f"({reason.value})"
+            )
+
     for probe_index in options.state_probe_entry_indices:
         reason = filtered.get(probe_index)
         if reason is not None:
@@ -318,6 +327,13 @@ def normalize_har(document: Mapping[str, Any], options: HarCaptureOptions) -> di
 
     entries = document["log"]["entries"]
     entry_count = len(entries)
+    for setup_index in options.setup_entry_indices:
+        if setup_index >= entry_count:
+            raise HarCaptureError(
+                "HAR setup role error at entry "
+                f"{setup_index}: index is out of range for {entry_count} entries"
+            )
+
     for probe_index in options.state_probe_entry_indices:
         if probe_index >= entry_count:
             raise HarCaptureError(
@@ -332,6 +348,8 @@ def normalize_har(document: Mapping[str, Any], options: HarCaptureOptions) -> di
     steps: list[dict[str, Any]] = []
     step_by_entry: dict[int, str] = {}
     processed_entries: list[tuple[int, Mapping[str, Any]]] = []
+    setup_indices = set(options.setup_entry_indices)
+    probe_indices = set(options.state_probe_entry_indices)
 
     for index, entry in retained_entries:
         if not isinstance(entry, dict):
@@ -361,7 +379,12 @@ def normalize_har(document: Mapping[str, Any], options: HarCaptureOptions) -> di
 
         step_id = _step_id(index, method, path)
         depends_on = [steps[-1]["id"]] if steps else []
-        is_probe = index in options.state_probe_entry_indices
+        if index in setup_indices:
+            role = "setup"
+        elif index in probe_indices:
+            role = "probe"
+        else:
+            role = "action"
         request_spec: dict[str, Any] = {
             "method": method,
             "path": path,
@@ -378,7 +401,7 @@ def normalize_har(document: Mapping[str, Any], options: HarCaptureOptions) -> di
         steps.append(
             {
                 "id": step_id,
-                "role": "probe" if is_probe else "action",
+                "role": role,
                 "session": "default",
                 "request": request_spec,
                 "extract": [],
@@ -388,6 +411,14 @@ def normalize_har(document: Mapping[str, Any], options: HarCaptureOptions) -> di
         )
         step_by_entry[index] = step_id
         processed_entries.append((index, entry))
+
+    missing_setups = [
+        index for index in options.setup_entry_indices if index not in step_by_entry
+    ]
+    if missing_setups:
+        raise HarCaptureError(
+            f"HAR setup role error at entry {missing_setups[0]}: entry did not generate a step"
+        )
 
     missing_probes = [
         index for index in options.state_probe_entry_indices if index not in step_by_entry

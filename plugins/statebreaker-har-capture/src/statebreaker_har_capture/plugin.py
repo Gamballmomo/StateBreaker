@@ -32,6 +32,7 @@ class HarCapturePlugin:
             "replayable-credentials",
             "static-resource-filtering",
             "json-response-extractors",
+            "explicit-step-roles",
         ],
         description=(
             "Offline HAR 1.2 import and normalization plugin that produces deterministic "
