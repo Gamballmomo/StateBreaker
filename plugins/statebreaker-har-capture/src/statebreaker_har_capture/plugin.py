@@ -33,6 +33,7 @@ class HarCapturePlugin:
             "static-resource-filtering",
             "explicit-entry-exclusion",
             "browser-header-normalization",
+            "required-response-body-validation",
             "json-response-extractors",
             "explicit-step-roles",
         ],

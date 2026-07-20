@@ -23,6 +23,7 @@ from statebreaker_har_capture.resource_filter import (
     StaticResourceReason,
     static_resource_filter_reason,
 )
+from statebreaker_har_capture.response_body import decode_json_response
 
 ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 REMOVED_HEADERS = frozenset(
@@ -331,6 +332,13 @@ def _retained_entries(
                 f"({reason.value})"
             )
 
+    for required_index in sorted(options.required_response_body_entry_indices):
+        if required_index in filtered:
+            raise HarCaptureError(
+                "HAR required response body error at entry "
+                f"{required_index}: selected entry was filtered"
+            )
+
     if not retained:
         raise HarCaptureError(
             "HAR static resource filter error: all entries were filtered; "
@@ -365,6 +373,12 @@ def normalize_har(document: Mapping[str, Any], options: HarCaptureOptions) -> di
                 f"{probe_index}: index is out of range for {entry_count} entries"
             )
 
+    for required_index in sorted(options.required_response_body_entry_indices):
+        if required_index >= entry_count:
+            raise HarCaptureError(
+                "HAR required response body error at entry "
+                f"{required_index}: index is out of range for {entry_count} entries"
+            )
     retained_entries = _retained_entries(entries, options)
 
     expected_origin: tuple[str, str, int] | None = None
@@ -454,6 +468,15 @@ def normalize_har(document: Mapping[str, Any], options: HarCaptureOptions) -> di
         raise HarCaptureError(
             f"HAR state probe error at entry {missing_probes[0]}: entry did not generate a step"
         )
+
+    processed_by_entry = dict(processed_entries)
+    for required_index in sorted(options.required_response_body_entry_indices):
+        result = decode_json_response(processed_by_entry[required_index])
+        if result.failure is not None:
+            raise HarCaptureError(
+                "HAR required response body error at entry "
+                f"{required_index}: {result.failure.value}"
+            )
 
     if options.infer_response_variables:
         try:

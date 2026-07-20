@@ -145,6 +145,49 @@ statebreaker workflow import recording.har --plugin har.capture \
   --options capture-options.json --output workflow.json
 ```
 
+## Required response body validation
+
+The plugin manifest advertises the `required-response-body-validation` capability. The strict
+`required_response_body_entry_indices: list[int]` option defaults to `[]`. Each value is an
+original zero-based HAR `log.entries` index and explicitly asserts that the retained entry has an
+untruncated, JSON-compatible response body that the current response-variable inference decoder can
+parse.
+
+This is a recording-completeness assertion, not automatic producer detection. The plugin does not
+select entries from URL names, methods, status codes, identifier formats, length, or entropy.
+`setup_entry_indices` and `state_probe_entry_indices` do not automatically become required, and a
+required index may overlap either role list. A required index must not overlap
+`exclude_entry_indices`; if static-resource filtering removes it, capture fails with the original
+index. Validation still runs when `infer_response_variables=False`.
+
+A required response must use `application/json` or an `application/*+json` subtype; MIME parameters
+and case differences are supported. Plain JSON text and strict base64-encoded UTF-8 JSON are
+accepted. Missing response/content/text, empty or malformed JSON, unsupported encoding, explicit
+response/content truncation, and status 204 fail with a safe entry-index error. Other status codes
+do not fail solely because of their status.
+
+Any valid JSON value passes, including objects, arrays, strings, numbers, booleans, and null. A
+parseable body does not guarantee a candidate, consumer, variable, or Extractor; it only proves the
+selected response body was recorded in a form the inference decoder can read.
+
+Configure the assertion through the CLI `--options` JSON/YAML file:
+
+```json
+{
+  "exclude_entry_indices": [0, 1, 2],
+  "setup_entry_indices": [15],
+  "state_probe_entry_indices": [16, 19],
+  "required_response_body_entry_indices": [15],
+  "normalize_browser_headers": true
+}
+```
+
+```bash
+statebreaker workflow import recording.har \
+  --plugin har.capture \
+  --options capture-options.json \
+  --output workflow.json
+```
 ## Explicit step roles
 
 The plugin manifest advertises the `explicit-step-roles` capability. Callers can assign roles with
@@ -237,6 +280,7 @@ workflow = await HarCapturePlugin().capture(
         "infer_response_variables": True,
         "normalize_browser_headers": True,
         "exclude_entry_indices": [2, 4],
+        "required_response_body_entry_indices": [0],
         "setup_entry_indices": [0],
         "state_probe_entry_indices": [1],
         "strip_credentials": False,
@@ -250,11 +294,12 @@ extractors. Set `normalize_browser_headers=False` to restore the pre-capability 
 described above. These three options are strict booleans and default to `True` when the options
 mapping is empty. `strip_credentials` is a separate strict boolean that defaults to `False`.
 
-Indices are zero-based positions in the original `log.entries` array. Each list must contain
-unique, non-negative, in-range integers. Excluded indices must not overlap setup or probe indices,
-and setup and probe indices must not overlap each other. Setup and probe indices must refer to a
-generated step. Only selected probe steps are listed in `state_probe_steps`. Selecting an entry removed by
-static-resource filtering is an explicit error and is never silently ignored or remapped.
+Indices are zero-based positions in the original `log.entries` array. Each list must contain unique,
+non-negative, in-range integers. Excluded indices must not overlap setup, probe, or required-response
+indices, and setup and probe indices must not overlap each other. Required-response indices may
+overlap setup or probe indices because recording completeness and execution roles are independent.
+Setup, probe, and required-response indices must refer to retained entries. Only selected probe
+steps are listed in `state_probe_steps`; static-filter removal is never silently ignored or remapped.
 
 The core CLI accepts the same mapping from a JSON or YAML file:
 

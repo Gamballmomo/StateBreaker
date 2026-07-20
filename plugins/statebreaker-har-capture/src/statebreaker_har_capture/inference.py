@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import copy
 import hashlib
 import json
@@ -13,6 +11,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from jsonpath_ng.ext import parse as parse_jsonpath  # type: ignore[import-untyped]
+
+from statebreaker_har_capture.response_body import decode_json_response
 
 JsonPathComponent = str | int
 ScalarValue = str | int
@@ -234,46 +234,6 @@ def _safe_scalar(value: Any) -> ScalarValue | None:
     return stripped
 
 
-def _is_json_mime(mime_type: Any) -> bool:
-    if not isinstance(mime_type, str):
-        return False
-    normalized = mime_type.split(";", maxsplit=1)[0].strip().lower()
-    if normalized == "application/json":
-        return True
-    return "/" in normalized and normalized.rsplit("/", maxsplit=1)[1].endswith("+json")
-
-
-def _response_json(entry: Mapping[str, Any]) -> Any | None:
-    response = entry.get("response")
-    if not isinstance(response, Mapping):
-        return None
-    content = response.get("content")
-    if not isinstance(content, Mapping):
-        return None
-    if any(
-        marker.get("_truncated") is True or marker.get("truncated") is True
-        for marker in (response, content)
-    ):
-        return None
-    if not _is_json_mime(content.get("mimeType")):
-        return None
-
-    text = content.get("text")
-    if not isinstance(text, str):
-        return None
-    encoding = content.get("encoding")
-    if encoding not in (None, "", "base64"):
-        return None
-    if encoding == "base64":
-        try:
-            text = base64.b64decode(text, validate=True).decode("utf-8")
-        except (binascii.Error, UnicodeDecodeError):
-            return None
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None
 
 
 def _json_path(path: Sequence[JsonPathComponent]) -> str | None:
@@ -311,9 +271,10 @@ def collect_response_candidates(
 ) -> tuple[ResponseCandidate, ...]:
     """Collect safe scalar leaves without mutating the HAR entry."""
 
-    document = _response_json(entry)
-    if document is None:
+    decoded = decode_json_response(entry)
+    if decoded.failure is not None:
         return ()
+    document = decoded.value
 
     candidates: list[ResponseCandidate] = []
 
