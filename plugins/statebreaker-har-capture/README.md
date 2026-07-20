@@ -1,6 +1,8 @@
 # StateBreaker HAR Capture
 
-`statebreaker-har-capture` is an offline importer for minimal HAR 1.2 files. It parses a
+## Plugin purpose
+
+`statebreaker-har-capture` converts authorized HAR 1.2 traffic into a StateBreaker `Workflow`. It parses a
 HAR without network access, conservatively filters known static resources, removes
 transport-managed request headers, and produces a deterministic StateBreaker `Workflow`
 with a linear dependency chain.
@@ -11,18 +13,64 @@ From the StateBreaker repository root:
 
 ```bash
 python -m pip install -e plugins/statebreaker-har-capture
-statebreaker workflow import recording.har --plugin har.capture --output workflow.json
+statebreaker workflow import recording.har --plugin har.capture \
+  --options capture-options.json --output workflow.json
 statebreaker workflow validate workflow.json
 ```
 
-The importer accepts `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` requests. JSON bodies and
-`application/x-www-form-urlencoded` bodies are normalized into the core `json_body` and
-`form_body` contracts. Other raw body formats are rejected with a clear error. Conservative
-response-variable inference is available for replay-relevant JSON scalar values.
+`--options` accepts a JSON or YAML file path.
 
-Authorization and Cookie headers are preserved by default because a captured authenticated
-workflow must remain replayable. Treat exported Workflow files as sensitive data. Direct API
-callers can set `strip_credentials=True` when they need a shareable redacted artifact.
+## Supported scope
+
+The importer supports:
+
+- HTTP and HTTPS requests from one origin;
+- one StateBreaker session;
+- `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`;
+- query parameters and repeated query values;
+- JSON request bodies;
+- `application/x-www-form-urlencoded` request bodies;
+- request Headers;
+- conservative JSON response Extractors;
+- configuration by original HAR entry index;
+- browser Header normalization;
+- explicit setup and probe roles;
+- replayable credentials, preserved by default unless explicitly stripped.
+
+Other raw request body formats are rejected. This supported scope does not imply that an arbitrary
+HAR can be imported and replayed without explicit business-flow selection and review.
+
+## Processing pipeline
+
+Processing occurs in this order:
+
+1. HAR parse;
+2. option and original-index validation;
+3. explicit exclusion;
+4. static-resource filtering;
+5. request normalization;
+6. explicit role assignment;
+7. required response body validation;
+8. response variable inference;
+9. step ID stabilization;
+10. `state_probe_steps` construction;
+11. core `Workflow` validation.
+
+Exclusion therefore happens before origin selection and normalization. Inference and step ID
+stabilization preserve explicit roles and atomically remap dependencies and probe references.
+
+## Safety boundary
+
+- Authorization and Cookie Headers are preserved by default so an authorized workflow can remain
+  replayable. Treat exported Workflows as sensitive data.
+- Set `strip_credentials=true` to remove those credential Headers.
+- Safe errors report an original entry index and a reason category without echoing request URLs,
+  Header values, request or response bodies, or credential values.
+- Required response body validation is an opt-in recording-integrity assertion, not automatic
+  producer detection.
+- The plugin does not guess a dynamic ID when a producer response is missing.
+- A parseable body does not guarantee that inference will produce an Extractor.
+- Do not commit an unreviewed real HAR; repository fixtures must remain synthetic and sanitized.
 
 ## Browser request Header normalization
 
@@ -70,6 +118,10 @@ Setting `normalize_browser_headers=False` restores the Header behavior from befo
 The legacy normalizer still removes its original transport-managed set (`Host`, `Content-Length`,
 `Transfer-Encoding`, `Connection`, and `Proxy-Authorization`); the new browser, cache, prefix, and
 pseudo-header rules are disabled. Existing duplicate retained Header handling is unchanged.
+
+At Runtime, `httpx` may independently generate transport Headers such as `Host`, `Content-Length`,
+`User-Agent`, and `Accept-Encoding`. Those generated fields are not fixed Headers stored by the
+Capture plugin.
 
 Some applications may intentionally depend on `User-Agent` or a `Sec-*` Header. Such recordings can
 disable normalization explicitly. Header normalization does not prove that an arbitrary HAR is
@@ -175,9 +227,12 @@ Configure the assertion through the CLI `--options` JSON/YAML file:
 ```json
 {
   "exclude_entry_indices": [0, 1, 2],
-  "setup_entry_indices": [15],
-  "state_probe_entry_indices": [16, 19],
-  "required_response_body_entry_indices": [15],
+  "setup_entry_indices": [3],
+  "state_probe_entry_indices": [4, 6],
+  "required_response_body_entry_indices": [3],
+  "strip_credentials": false,
+  "filter_static_resources": true,
+  "infer_response_variables": true,
   "normalize_browser_headers": true
 }
 ```
@@ -219,9 +274,6 @@ statebreaker workflow import recording.har --plugin har.capture \
   --options capture-options.json --output workflow.json
 ```
 
-For the local coupon-race fixture, the JSON configuration above produces
-`setup, probe, action, probe` for entries `0, 1, 2, 3`.
-
 ## JSON response extractors
 
 The plugin manifest advertises the `json-response-extractors` capability. Inference is enabled by
@@ -240,6 +292,9 @@ complete-value use. Ambiguous values are left literal. Generated JSONPath extrac
 and are added to the producer; consumers retain the linear dependency and explicitly depend on the
 producer.
 
+Sensitive Token, Cookie, Authorization, session, CSRF/XSRF, JWT, bearer, and private-key values are
+excluded by field-path and credential-shape checks rather than inferred as replay variables.
+
 Replacement is limited to complete path segments, complete query values or list elements, JSON
 body string/integer leaves, and form values or list elements. Headers, Authorization, Cookie, URL
 host/scheme, response headers, dictionary keys, encoded path segments, and composite strings are
@@ -256,50 +311,73 @@ step metadata. The plugin does not provide general anonymization for unknown ide
 This feature does not automatically infer setup roles, authentication variables, CSRF flows,
 sessions, origins, or generic dependencies, and it does not prove Runtime replay.
 
-## Local coupon-race replay acceptance
+## Current limitations
 
-The synthetic `coupon-race-normal.har` fixture is verified to produce a Workflow that replays the
-normal create, state, redeem, and state flow against the repository's coupon-race FastAPI app. The
-integration test uses `httpx.ASGITransport`, so every request stays in process and no external
-network or listening port is used.
+- No automatic business-flow selection.
+- No automatic setup/probe role inference.
+- No generated login flow.
+- No automatic CSRF acquisition or refresh.
+- No multi-session Workflow construction.
+- No multi-origin Workflow construction.
+- No multipart or file-upload request body support.
+- No WebSocket capture.
+- No guaranteed recovery when a producer response body is missing.
+- No inference from dynamic Header values.
+- No guarantee that an arbitrary browser HAR can replay without review and explicit options.
 
-This acceptance covers a single origin, one session, and a JSON API. The create step remains an
-`action` by default and becomes `setup` only when entry `0` is explicitly configured. Generic
-authentication and CSRF inference remain unsupported, and this focused test does not imply that
-arbitrary HAR recordings are replayable.
+## Verified chain
 
-## Options
+Validation uses synthetic and sanitized artifacts only:
 
-Direct plugin callers may pass the strict supported options:
+- a sanitized Chrome-shaped HAR fixture;
+- Capture import and Workflow validation;
+- real `ExecutionRuntime` replay against the coupon-race lab;
+- Delta Learner probe sampling.
 
-```python
-workflow = await HarCapturePlugin().capture(
-    Path("recording.har"),
-    {
-        "filter_static_resources": True,
-        "infer_response_variables": True,
-        "normalize_browser_headers": True,
-        "exclude_entry_indices": [2, 4],
-        "required_response_body_entry_indices": [0],
-        "setup_entry_indices": [0],
-        "state_probe_entry_indices": [1],
-        "strip_credentials": False,
-    },
-)
+The repository integration test uses `httpx.ASGITransport`, so it requires neither Docker nor a
+listening port. These checks cover one origin, one session, and a JSON API. They do not describe the
+synthetic fixture as a production recording or guarantee universal HAR replayability.
+
+## Complete options reference
+
+All options are strict. Booleans are not coerced from strings or integers, and index lists accept
+integers only.
+
+| Option | Type | Default |
+| --- | --- | --- |
+| `state_probe_entry_indices` | `list[int]` | `[]` |
+| `setup_entry_indices` | `list[int]` | `[]` |
+| `exclude_entry_indices` | `list[int]` | `[]` |
+| `required_response_body_entry_indices` | `list[int]` | `[]` |
+| `strip_credentials` | `bool` | `false` |
+| `filter_static_resources` | `bool` | `true` |
+| `infer_response_variables` | `bool` | `true` |
+| `normalize_browser_headers` | `bool` | `true` |
+
+```json
+{
+  "exclude_entry_indices": [0, 1, 2],
+  "setup_entry_indices": [3],
+  "state_probe_entry_indices": [4, 6],
+  "required_response_body_entry_indices": [3],
+  "strip_credentials": false,
+  "filter_static_resources": true,
+  "infer_response_variables": true,
+  "normalize_browser_headers": true
+}
 ```
 
-Set `filter_static_resources=False` through the direct plugin API to retain every HAR entry.
-Set `infer_response_variables=False` to keep normalized requests literal and emit no inferred
-extractors. Set `normalize_browser_headers=False` to restore the pre-capability Header behavior
-described above. These three options are strict booleans and default to `True` when the options
-mapping is empty. `strip_credentials` is a separate strict boolean that defaults to `False`.
+Every configured index is an original zero-based position in the HAR `log.entries` array. Each
+list must contain unique, non-negative, in-range integers. Excluded indices must not overlap setup,
+probe, or required-response indices; setup and probe indices must not overlap. Required-response
+indices may overlap setup or probe indices because recording completeness and execution roles are
+independent. Setup, probe, and required-response indices must refer to retained entries. Only
+selected probe steps are listed in `state_probe_steps`.
 
-Indices are zero-based positions in the original `log.entries` array. Each list must contain unique,
-non-negative, in-range integers. Excluded indices must not overlap setup, probe, or required-response
-indices, and setup and probe indices must not overlap each other. Required-response indices may
-overlap setup or probe indices because recording completeness and execution roles are independent.
-Setup, probe, and required-response indices must refer to retained entries. Only selected probe
-steps are listed in `state_probe_steps`; static-filter removal is never silently ignored or remapped.
+Set `filter_static_resources=False` through the direct plugin API to retain every HAR entry. Set
+`infer_response_variables=False` to keep normalized requests literal and emit no inferred
+Extractors. Set `normalize_browser_headers=False` to restore the compatibility behavior described
+above. These options default to `True`; `strip_credentials` defaults to `False`.
 
 The core CLI accepts the same mapping from a JSON or YAML file:
 
@@ -307,3 +385,20 @@ The core CLI accepts the same mapping from a JSON or YAML file:
 statebreaker workflow import recording.har --plugin har.capture \
   --options capture-options.json --output workflow.json
 ```
+
+## Manifest capabilities
+
+The manifest declares these implemented and tested capabilities:
+
+- `har-1.2`;
+- `deterministic-workflow`;
+- `offline-import`;
+- `json-body`;
+- `form-body`;
+- `replayable-credentials`;
+- `static-resource-filtering`;
+- `explicit-entry-exclusion`;
+- `browser-header-normalization`;
+- `required-response-body-validation`;
+- `json-response-extractors`;
+- `explicit-step-roles`.
